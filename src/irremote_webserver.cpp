@@ -176,18 +176,6 @@ void rotateACMode() {
   return setACMode(g_Mode + 1);
 }
 
-void printState() {
-  // Display the settings.
-  Serial.println("A/C remote is in the following state:");
-  Serial.printf("  %s\n", ac.toString().c_str());
-  // Display the encoded IR sequence.
-  unsigned char* ir_code = ac.getRaw();
-  Serial.print("IR Code: 0x");
-  for (uint8_t i = 0; i < kCoronaAcStateLength; i++)
-    Serial.printf("%02X", ir_code[i]);
-  Serial.println();
-}
-
 ///////// IRRemote, NEC Commands
 
 const uint16_t kIRConAddress = 0x0CE7;
@@ -260,18 +248,8 @@ void blink_ir_led() {
 
 void setup() {
   pinMode(BUILTIN_LED, OUTPUT);
-  ac.begin();
   Serial.begin(115200);
   delay(200);
-
-  // IRremote8266
-  ac.setMode(g_Mode);
-  ac.setTemp(g_Temp);
-  ac.setSwingVToggle(g_Swing);
-  ac.setFan(g_Fan);
-  ac.setEcono(g_Econo);
-  Serial.println("Default state of the AC remote.");
-  printState();
 
   // esp8266WebServer
   WiFi.mode(WIFI_STA);
