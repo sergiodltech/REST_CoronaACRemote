@@ -2,9 +2,8 @@
 
 #include "CoronaAC.h"
 
-CoronaAC::CoronaAC(const uint8_t pin, const bool debug = false,
-                   const uint8_t temp, const uint8_t fanMode, const uint8_t mode):
-                   _(pin, debug, temp, fanMode, mode) {}
+CoronaAC::CoronaAC(uint8_t pin, bool debug, uint8_t temp, uint8_t fanMode, uint8_t mode, bool swing, bool econo)
+                   : _(pin, debug, temp, fanMode, mode, swing, econo) {}
 
 void CoronaAC::begin() {
     _.ac.begin();
@@ -30,6 +29,21 @@ void CoronaAC::printState() {
     for (uint8_t i = 0; i < kCoronaAcStateLength; i++)
         Serial.printf("%02X", ir_code[i]);
     Serial.println();
+}
+
+CoronaACState CoronaAC::setState(CoronaACState state) {
+    _.debug = state.debug;
+    _.Temp = state.Temp;
+    _.Fan = state.Fan;
+    _.Mode = state.Mode;
+    _.isSwinging = state.isSwinging;
+    _.isEcono = state.isEcono;
+    _.ac.send();
+    return _;
+}
+
+CoronaACState CoronaAC::getState() {
+    return _;
 }
 
 void CoronaAC::turnOn() {
@@ -89,6 +103,21 @@ bool CoronaAC::setSwing(const bool on) {
 
 bool CoronaAC::toggleSwing() {
     return setSwing(!_.isSwinging);
+}
+
+bool CoronaAC::setEcono(const bool on) {
+    _.isEcono = on;
+    if (_.debug) {
+        Serial.print("CMD: setting economic mode to ");
+        Serial.printf("%s\n", _.isEcono ? "on": "off");
+    }
+    _.ac.setEcono(_.isEcono);
+    _.ac.send();
+    return _.isEcono;
+}
+
+bool CoronaAC::toggleSwing() {
+    return setEcono(!_.isEcono);
 }
 
 const char* CoronaAC::setFanMode(const uint8_t fanMode) {

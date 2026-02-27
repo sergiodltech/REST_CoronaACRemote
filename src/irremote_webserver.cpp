@@ -13,42 +13,44 @@
 
 #include <TinyIRSender.hpp>
 
+#include "CoronaAC.h"
+#include "secrets.h"
+
 #define BUILTIN_LED D4
 #define IR_LED D5
 #define GPIO_IR_LED 14
 
 ///////// esp8266WebServer
 
-#ifndef STASSID
-#define STASSID "TP-LINK555"
-#define STAPSK "ohmaigaaaloungewifi"
-#endif
-
-const char* ssid = STASSID;
-const char* password = STAPSK;
+const char* ssid = AP_SSID;
+const char* password = AP_PASS;
 
 ESP8266WebServer server(80);
 static char outputBuffer[50];
 const uint8_t obSize = sizeof(outputBuffer);
 
-const char* www_username = "admin";
-const char* www_password = "esp8266";
+const char* www_username = BAUTH_USER;
+const char* www_password = BAUTH_PASS;
 
 ///////// IRremote8266
 
-const char* kFanModes[4] = {"Auto", "Low", "Mid", "High"};
-const uint8_t kFanModesSize = sizeof(kFanModes) / sizeof(kFanModes[0]);
-const char* kACModes[4] = {"Heat", "Dry", "Cool", "Fan"};
-const uint8_t kACModesSize = sizeof(kACModes) / sizeof(kACModes[0]);
+// Local defaults
+const bool AC_DEBUG = true;
+const uint8_t AC_TEMP = 18;
+const bool AC_SWING = false;
+const bool AC_ECONO = true;
+const uint8_t AC_FAN = CORAC_DEFAULT_FAN;
+const uint8_t AC_MODE = kCoronaAcModeHeat;
 
-const uint16_t kIrLed = IR_LED;
-static uint8_t g_Temp = 18;
-static uint8_t g_Fan = kCoronaAcFanAuto;
-static uint8_t g_Mode = kCoronaAcModeHeat;
-static bool g_Swing = false;
-static bool g_Econo = true;
-static bool g_Power = true;
-IRCoronaAc ac(kIrLed);
+// Globals
+static bool g_DebugAC = AC_DEBUG;
+static uint8_t g_Temp = AC_TEMP;
+static bool g_Swing = AC_SWING;
+static bool g_Econo = AC_ECONO;
+static uint8_t g_Fan = AC_FAN;
+static uint8_t g_Mode = AC_MODE;
+
+CoronaAC ac(IR_LED, g_DebugAC, g_Temp);
 
 void okResponse(const char* text) {
   server.send(200, "text/plain", text);
@@ -59,121 +61,187 @@ void failResponse(const char* text, const int code = 400) {
 
 void turnACOn() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   char message[] = "CMD: turning on AC";
   Serial.println(message);
-  ac.on();
-  ac.setPower(true);
-  ac.send();
+  ac.turnOn();
   okResponse(message);
 }
 
 void turnACOff() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   char message[] = "CMD: turning off AC";
   Serial.println(message);
-  ac.off();
-  ac.setPower(false);
-  ac.send();
+  ac.turnOff();
   okResponse(message);
 }
 
-void setACTemp(const int desiredTemp) {
-  if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
-  }
-
+uint8_t sanitizeACTemp(const uint8_t desiredTemp) {
+  uint8_t result;
   if (desiredTemp > kCoronaAcMaxTemp) {
-    g_Temp = kCoronaAcMaxTemp;
+    result = kCoronaAcMaxTemp;
   } else if (desiredTemp < kCoronaAcMinTemp) {
-    g_Temp = kCoronaAcMinTemp;
+    result = kCoronaAcMinTemp;
   } else {
-    g_Temp = desiredTemp;
+    result = desiredTemp;
+  }
+  return result;
+}
+
+void setACTemp(const uint8_t desiredTemp) {
+  if (!server.authenticate(www_username, www_password)) {
+    server.requestAuthentication();
+    return;
   }
 
+  g_Temp = sanitizeACTemp(desiredTemp);
   memset(outputBuffer, 0, obSize);
   snprintf(outputBuffer, obSize, "CMD: setting temp to %dC", g_Temp);
 
   Serial.println(outputBuffer);
   ac.setTemp(g_Temp);
-  ac.send();
   okResponse(outputBuffer);
 }
 
 void reduceACTemp() {
-  return setACTemp(g_Temp - 1);
+  setACTemp(g_Temp - 1);
 }
 
 void increaseACTemp() {
-  return setACTemp(g_Temp + 1);
+  setACTemp(g_Temp + 1);
 }
 
 void toggleSwing() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   g_Swing = !g_Swing;
   memset(outputBuffer, 0, obSize);
   snprintf(outputBuffer, obSize, "CMD: toggling swing to %s", g_Swing ? "on": "off");
   Serial.println(outputBuffer);
-  ac.setSwingVToggle(g_Swing);
-  ac.send();
+  ac.setSwing(g_Swing);
   okResponse(outputBuffer);
+}
+
+void toggleEcono() {
+  if (!server.authenticate(www_username, www_password)) {
+    server.requestAuthentication();
+    return;
+  }
+  g_Econo = !g_Econo;
+  memset(outputBuffer, 0, obSize);
+  snprintf(outputBuffer, obSize, "CMD: toggling economic mode to %s", g_Econo ? "on": "off");
+  Serial.println(outputBuffer);
+  ac.setEcono(g_Econo);
+  okResponse(outputBuffer);
+}
+
+uint8_t sanitizeFanMode(const uint8_t desiredFanMode) {
+  uint8_t result;
+  if (desiredFanMode > kFanModesSize - 1) {
+    result = 0;
+  } else if (desiredFanMode < 0) {
+    result = kFanModesSize - 1;
+  } else {
+    result = desiredFanMode;
+  }
+  return result;
 }
 
 void setFanMode(const uint8_t desiredFanMode) {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
 
-  if (desiredFanMode > kFanModesSize - 1) {
-    g_Fan = 0;
-  } else if (desiredFanMode < 0) {
-    g_Fan = kFanModesSize - 1;
-  } else {
-    g_Fan = desiredFanMode;
-  }
-
+  g_Fan = sanitizeFanMode(desiredFanMode);
   memset(outputBuffer, 0, obSize);
   snprintf(outputBuffer, obSize, "CMD: setting Fan mode to %s", kFanModes[g_Fan]);
 
   Serial.println(outputBuffer);
-  ac.setFan(g_Fan);
-  ac.send();
+  ac.setFanMode(g_Fan);
   okResponse(outputBuffer);
 }
 
 void rotateFanMode() {
-  return setFanMode(g_Fan + 1);
+  setFanMode(g_Fan + 1);
+}
+
+uint8_t sanitizeACMode(const uint8_t desiredACMode) {
+  uint8_t result;
+  if (desiredACMode > kACModesSize - 1) {
+    result = 0;
+  } else if (desiredACMode < 0) {
+    result = kACModesSize - 1;
+  } else {
+    result = desiredACMode;
+  }
+  return result;
 }
 
 void setACMode(const uint8_t desiredACMode) {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
 
-  if (desiredACMode > kACModesSize - 1) {
-    g_Mode = 0;
-  } else if (desiredACMode < 0) {
-    g_Mode = kACModesSize - 1;
-  } else {
-    g_Mode = desiredACMode;
-  }
-
+  g_Mode = sanitizeACMode(desiredACMode);
   memset(outputBuffer, 0, obSize);
   snprintf(outputBuffer, obSize, "CMD: setting AC mode to %s", kACModes[g_Mode]);
 
   Serial.println(outputBuffer);
-  ac.setMode(g_Mode);
-  ac.send();
+  ac.setACMode(g_Mode);
   okResponse(outputBuffer);
 }
 
 void rotateACMode() {
-  return setACMode(g_Mode + 1);
+  setACMode(g_Mode + 1);
+}
+
+void setACState(const uint8_t temp = -1, const uint8_t mode = -1, const uint8_t fan = -1,
+                const uint8_t swing = -1, const uint8_t econo = -1, const uint8_t debug = -1) {
+  if (!server.authenticate(www_username, www_password)) {
+    server.requestAuthentication();
+    return;
+  }
+
+  CoronaACState newState = ac.getState();
+  if (temp != -1) {
+    g_Temp = sanitizeACTemp(temp);
+    newState.Temp = g_Temp;
+  }
+  if (mode != -1) {
+    g_Mode = sanitizeACMode(mode);
+    newState.Mode = g_Mode;
+  }
+  if (fan != -1) {
+    g_Fan = sanitizeFanMode(fan);
+    newState.Fan = g_Fan;
+  }
+  if (swing != -1) {
+    g_Swing = swing > 0;
+    newState.isSwinging = g_Swing;
+  }
+  if (econo != -1) {
+    g_Econo = econo > 0;
+    newState.isEcono = g_Econo;
+  }
+  if (debug != -1) {
+    g_DebugAC = debug > 0;
+    newState.debug = g_DebugAC;
+  }
+
+  memset(outputBuffer, 0, obSize);
+  snprintf(outputBuffer, obSize, "CMD: setting AC state to %s", newState.ac.toString().c_str());
+  Serial.println(outputBuffer);
+  ac.setState(newState);
+  okResponse(outputBuffer);
 }
 
 ///////// IRRemote, NEC Commands
@@ -189,7 +257,8 @@ const uint8_t kIRConRepeats = 1;
 
 void lightsFullOn() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   char message[] = "CMD: turning on full lights";
   Serial.println(message);
@@ -200,7 +269,8 @@ void lightsFullOn() {
 
 void lightsOff() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   char message[] = "CMD: turning off lights";
   Serial.println(message);
@@ -211,7 +281,8 @@ void lightsOff() {
 
 void lightsLessLight() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   char message[] = "CMD: lowering the lights";
   Serial.println(message);
@@ -222,7 +293,8 @@ void lightsLessLight() {
 
 void lightsMoreLight() {
   if (!server.authenticate(www_username, www_password)) {
-    return server.requestAuthentication();
+    server.requestAuthentication();
+    return;
   }
   char message[] = "CMD: increasing the lights";
   Serial.println(message);
@@ -264,7 +336,8 @@ void setup() {
   ////// Login test
   server.on("/", []() {
     if (!server.authenticate(www_username, www_password)) {
-      return server.requestAuthentication();
+      server.requestAuthentication();
+      return;
     }
     server.send(200, "text/plain", "Login OK");
     blink_normal_led();
